@@ -1,0 +1,7 @@
+undetected-chromedriver
+selenium
+fake-useragent
+logging
+atexit
+json
+urllib
