@@ -89,7 +89,9 @@ class GenericScraper:
     def get_legislation_links(self):
         """Get links for different types of legislation"""
         try:
-            wait_for_element(self.driver, By.CSS_SELECTOR, "p a")
+            wait_for_element(
+                self.driver, By.CSS_SELECTOR, ".dropdown-menu.multi-column.columns-3"
+            )
 
             self.legislation_links = {
                 "projets": None,
@@ -98,20 +100,31 @@ class GenericScraper:
                 "last_page": None,
             }
 
-            links = find_elements(self.driver, By.CSS_SELECTOR, "p a")
+            legislation_dropdown = self.driver.find_element(
+                By.XPATH, "//a[contains(text(), 'التشريع')]/following-sibling::div"
+            )
+            links = legislation_dropdown.find_elements(
+                By.CSS_SELECTOR, "ul.multi-column-dropdown li a"
+            )
 
             for link in links:
                 try:
                     href = link.get_attribute("href")
-                    text = link.text.strip().lower()
+                    text = link.get_attribute("innerText").strip()
+                    self.logger.info(f"Found link: {text} -> {href}")
 
-                    if "projets de loi" in text:
+                    self.logger.info(
+                        f"Expected text: مشاريع القوانين, مقترحات القوانين, النصوص المصادق عليها"
+                    )
+                    self.logger.info(f"Extracted text: {text}")
+
+                    if "مشاريع القوانين" in text:
                         self.legislation_links["projets"] = href
                         self.logger.info(f"Found projets link: {href}")
-                    elif "propositions de loi" in text:
+                    elif "مقترحات القوانين" in text:
                         self.legislation_links["propositions"] = href
                         self.logger.info(f"Found propositions link: {href}")
-                    elif "textes de loi" in text:
+                    elif "النصوص المصادق عليها" in text:
                         self.legislation_links["adopted"] = href
                         self.logger.info(f"Found adopted texts link: {href}")
 
@@ -119,82 +132,207 @@ class GenericScraper:
                     self.logger.error(f"Error processing link: {str(e)}")
                     continue
 
-            try:
-                last_page_link = self.driver.find_element(
-                    By.CSS_SELECTOR, ".pagination-container .last-item a"
-                )
-                self.legislation_links["last_page"] = last_page_link.get_attribute(
-                    "href"
-                )
-                self.logger.info(
-                    f"Found last page link: {self.legislation_links['last_page']}"
-                )
-            except NoSuchElementException:
-                self.logger.info("No last page link found.")
-
+            # self.logger.info(f"Found links: {self.legislation_links}")
             return self.legislation_links
 
         except Exception as e:
             self.logger.error(f"Error in get_legislation_links: {str(e)}")
             return {}
 
-    def extract_law_info(self):
+    def extract_law_info(self, law_type):
+        """Extract law information with simplified output format"""
         laws = []
         current_page = 1
-        last_page = None
 
         while True:
-            self.logger.info(f"Scraping page {current_page}")
-
-            # Wait for the law items to be present
-            wait_for_element(self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4")
-
-            # Find all law items
-            law_items = find_elements(
-                self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4"
-            )
-
-            for item in law_items:
-                try:
-                    # Find the link and title within each item
-                    link_element = item.find_element(
-                        By.CSS_SELECTOR, "h3.questionss_group a"
-                    )
-                    href = link_element.get_attribute("href")
-                    title = link_element.text.strip()
-
-                    # Decode URL-encoded title from href if title is empty
-                    if not title and href:
-                        try:
-                            encoded_title = href.split("/")[-1]
-                            title = unquote(encoded_title)
-                        except:
-                            title = "Unknown Title"
-
-                    if href and title:
-                        laws.append({"title": title, "url": href})
-
-                except Exception as e:
-                    self.logger.error(f"Error extracting law info: {str(e)}")
-                    continue
+            self.logger.info(f"Scraping page {current_page} for {law_type}")
 
             try:
-                next_page_link = self.driver.find_element(
-                    By.XPATH, "//a[@class='page-link' and contains(text(), 'Suivant')]"
+                wait_for_element(
+                    self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4", timeout=20
                 )
-                if last_page is None:
-                    current_page_link = self.driver.find_element(
-                        By.CSS_SELECTOR, ".pagination-container .active a"
+                current_page_url = self.driver.current_url
+                law_items = find_elements(
+                    self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4"
+                )
+
+                if not law_items:
+                    self.logger.warning(f"No law items found on page {current_page}")
+                    break
+
+                page_laws = []
+                for item in law_items:
+                    try:
+                        law_details = {"type": law_type, "readings": []}
+
+                        link_element = item.find_element(
+                            By.CSS_SELECTOR, "h3.questionss_group a"
+                        )
+                        law_url = link_element.get_attribute("href")
+                        law_title = link_element.find_element(
+                            By.CSS_SELECTOR, "p"
+                        ).text.strip()
+
+                        law_details.update({"title": law_title, "url": law_url})
+
+                        page_laws.append(law_details)
+
+                    except Exception as e:
+                        self.logger.error(f"Error extracting basic law info: {str(e)}")
+                        continue
+
+                for law in page_laws:
+                    try:
+                        # self.logger.info(f"Navigating to law page: {law['url']}")
+                        self.driver.get(law["url"])
+                        self.wait_for_page_load()
+                        time.sleep(random.uniform(2, 3))
+
+                        reading_sections = find_elements(
+                            self.driver, By.CSS_SELECTOR, ".dp-section"
+                        )
+
+                        for section in reading_sections:
+                            reading_data = {}
+
+                            try:
+                                reading_title = section.find_element(
+                                    By.CSS_SELECTOR, ".section-title"
+                                ).text.strip()
+                                reading_data["reading"] = reading_title
+                            except NoSuchElementException:
+                                continue
+
+                            blocks = section.find_elements(By.CSS_SELECTOR, ".dp-block")
+
+                            for block in blocks:
+                                try:
+                                    block_type = block.find_element(
+                                        By.CSS_SELECTOR, ".dp-block-l span"
+                                    ).text.strip()
+                                    details = block.find_elements(
+                                        By.CSS_SELECTOR, ".dp-block-r span"
+                                    )
+
+                                    if "مكتب مجلس النواب" in block_type:
+                                        for detail in details:
+                                            text = detail.text.strip()
+                                            if "تاريخ إحالته على المجلس" in text:
+                                                reading_data["deposit_date"] = (
+                                                    text.split(
+                                                        "تاريخ إحالته على المجلس:"
+                                                    )[-1].strip()
+                                                )
+
+                                    elif "اللجنة" in block_type:
+                                        for detail in details:
+                                            text = detail.text.strip()
+                                            if "تمت إحالته على لجنة" in text:
+                                                commission_name = (
+                                                    text.split("تمت إحالته على لجنة")[
+                                                        -1
+                                                    ]
+                                                    .split("في")[0]
+                                                    .strip()
+                                                )
+                                                reading_data["commission"] = (
+                                                    commission_name
+                                                )
+
+                                    elif "الجلسة العامة" in block_type:
+                                        for detail in details:
+                                            text = detail.text.strip()
+                                            if "نتيجة التصويت" in text:
+                                                vote_data = {}
+                                                vote_text = text.split("نتيجة التصويت")[
+                                                    -1
+                                                ].strip()
+
+                                                if "الإجماع" in vote_text:
+                                                    vote_data["unanimous"] = True
+                                                else:
+                                                    import re
+
+                                                    yes_match = re.search(
+                                                        r"الموافقون\s*[:：]\s*(\d+)",
+                                                        vote_text,
+                                                    )
+                                                    if yes_match:
+                                                        vote_data["yes"] = int(
+                                                            yes_match.group(1)
+                                                        )
+
+                                                    no_match = re.search(
+                                                        r"المعارضون\s*[:：]\s*(\d+)",
+                                                        vote_text,
+                                                    )
+                                                    if no_match:
+                                                        vote_data["no"] = int(
+                                                            no_match.group(1)
+                                                        )
+
+                                                    abstain_match = re.search(
+                                                        r"الممتنعون\s*[:：]\s*(\d+|لا أحد)",
+                                                        vote_text,
+                                                    )
+                                                    if abstain_match:
+                                                        abstain_value = (
+                                                            abstain_match.group(1)
+                                                        )
+                                                        vote_data["abstain"] = (
+                                                            0
+                                                            if abstain_value == "لا أحد"
+                                                            else int(abstain_value)
+                                                        )
+
+                                                    if "رفضه مجلس النواب" in vote_text:
+                                                        vote_data["rejected"] = True
+                                                    elif (
+                                                        "صادقه مجلس النواب" in vote_text
+                                                    ):
+                                                        vote_data["approved"] = True
+
+                                                if vote_data:
+                                                    reading_data["vote"] = vote_data
+
+                                except NoSuchElementException:
+                                    continue
+
+                            if reading_data.get("reading"):
+                                law["readings"].append(reading_data)
+
+                        laws.append(law)
+
+                    except Exception as e:
+                        self.logger.error(f"Error processing law details: {str(e)}")
+                        laws.append(law)
+                        continue
+
+                    finally:
+                        self.driver.get(current_page_url)
+                        self.wait_for_page_load()
+                        time.sleep(random.uniform(1, 2))
+
+                try:
+                    next_button = self.driver.find_element(
+                        By.XPATH,
+                        "//a[@class='page-link' and contains(text(), 'التالي')]",
                     )
-                    last_page = current_page_link.get_attribute("href")
-                next_page_link.click()
-                current_page += 1
-                self.wait_for_page_load()
-            except NoSuchElementException:
-                self.logger.info("No more pages to navigate.")
-                break
+                    if not next_button.is_enabled():
+                        break
+                    next_button.click()
+                    current_page += 1
+                    self.wait_for_page_load()
+                    time.sleep(random.uniform(1, 2))
+                except NoSuchElementException:
+                    self.logger.info("No more pages to navigate.")
+                    break
+                except Exception as e:
+                    self.logger.error(f"Error navigating to next page: {str(e)}")
+                    break
+
             except Exception as e:
-                self.logger.error(f"Error navigating to the next page: {str(e)}")
+                self.logger.error(f"Error processing page {current_page}: {str(e)}")
                 break
 
         return laws
@@ -203,24 +341,23 @@ class GenericScraper:
         laws = []
         legislature_links = self.get_legislature_links(adopted_laws_link)
 
-        for legislature_id, legislature_link in legislature_links.items():
-            self.logger.info(f"Scraping adopted laws for legislature {legislature_id}")
+        for legislature_period, legislature_link in legislature_links.items():
+            self.logger.info(
+                f"Scraping adopted laws for legislature period {legislature_period}"
+            )
             self.driver.get(legislature_link)
             self.wait_for_page_load()
 
             current_page = 1
-            last_page = None
             last_date = None
 
             while True:
                 self.logger.info(f"Scraping page {current_page}")
 
-                # Wait for the law items to be present
                 wait_for_element(
                     self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4"
                 )
 
-                # Find all date headers
                 date_elements = find_elements(
                     self.driver, By.CSS_SELECTOR, "h2.sorting_date"
                 )
@@ -228,21 +365,18 @@ class GenericScraper:
                 if date_elements:
                     last_date = date_elements[-1].text.strip()
 
-                # Find all law items
                 law_items = find_elements(
                     self.driver, By.CSS_SELECTOR, ".col-md-6.col-lg-4.mb-4"
                 )
 
                 for item in law_items:
                     try:
-                        # Find the link and title within each item
                         link_element = item.find_element(
                             By.CSS_SELECTOR, "h3.questionss_group a"
                         )
                         href = link_element.get_attribute("href")
                         title = link_element.text.strip()
 
-                        # Decode URL-encoded title from href if title is empty
                         if not title and href:
                             try:
                                 encoded_title = href.split("/")[-1]
@@ -250,13 +384,23 @@ class GenericScraper:
                             except:
                                 title = "Unknown Title"
 
+                        commission_element = item.find_element(
+                            By.CSS_SELECTOR, ".lw-link span"
+                        )
+                        commission = (
+                            commission_element.text.strip()
+                            if commission_element
+                            else "Unknown Commission"
+                        )
+
                         if href and title:
                             laws.append(
                                 {
                                     "title": title,
                                     "url": href,
                                     "date": last_date,
-                                    "legislature_id": legislature_id,
+                                    "legislature_period": legislature_period,
+                                    "commission": commission,
                                 }
                             )
 
@@ -269,13 +413,8 @@ class GenericScraper:
                 try:
                     next_page_link = self.driver.find_element(
                         By.XPATH,
-                        "//a[@class='page-link' and contains(text(), 'Suivant')]",
+                        "//a[@class='page-link' and contains(text(), 'التالي')]",
                     )
-                    if last_page is None:
-                        current_page_link = self.driver.find_element(
-                            By.CSS_SELECTOR, ".pagination-container .active a"
-                        )
-                        last_page = current_page_link.get_attribute("href")
                     next_page_link.click()
                     current_page += 1
                     self.wait_for_page_load()
@@ -289,31 +428,27 @@ class GenericScraper:
         return laws
 
     def get_legislature_links(self, adopted_laws_link):
-        """Get links for different legislative periods"""
+        """Get links for different legislature periods"""
         try:
+            wait_for_element(
+                self.driver, By.CSS_SELECTOR, ".dropdown-menu.multi-column.columns-3"
+            )
+
             legislature_links = {}
 
-            # Find the legislature selection dropdown
-            wait_for_element(
-                self.driver,
-                By.CSS_SELECTOR,
-                "select[name='field_legislature_target_id_1']",
-            )
             legislature_dropdown = self.driver.find_element(
                 By.CSS_SELECTOR, "select[name='field_legislature_target_id_1']"
             )
             legislature_select = Select(legislature_dropdown)
 
-            # Iterate through the dropdown options and generate the links
             for option in legislature_select.options:
                 option_text = option.text.strip()
                 option_value = option.get_attribute("value")
                 if option_value:
                     year = int(option_text.split("-")[0])
                     if year >= 2011:
-                        # Generate the URL for the current legislative period
                         current_url = f"{adopted_laws_link}?body_value=&field_legislature_target_id_1={option_value}&field_annee_legislative_target_id=All&field_nature_loi_target_id=All"
-                        legislature_links[option_value] = current_url
+                        legislature_links[option_text] = current_url
 
             return legislature_links
 
@@ -334,57 +469,46 @@ class GenericScraper:
         try:
             self.logger.info("Starting scraping process...")
 
-            # Initialize driver if not already done
             if self.driver is None:
                 self.driver = self.get_driver()
 
-            # Navigate to base URL
             self.logger.info(f"Accessing URL: {self.base_url}")
             self.driver.get(self.base_url)
             self.wait_for_page_load()
 
-            # Get legislation links
             links = self.get_legislation_links()
             self.logger.info(f"Found links: {links}")
 
             all_laws = {}
 
-            # Navigate to projets de loi page
             if links.get("projets"):
                 self.driver.get(links["projets"])
                 self.wait_for_page_load()
 
-                # Extract law information
-                laws = self.extract_law_info()
+                laws = self.extract_law_info("projets")
 
-                # Save to JSON
                 if laws:
                     all_laws["projets_de_loi"] = laws
                     self.save_to_json(
                         {"projets_de_loi": laws}, "moroccan_legislation.json"
                     )
 
-            # Navigate to propositions de loi page
             if links.get("propositions"):
                 self.driver.get(links["propositions"])
                 self.wait_for_page_load()
 
-                # Extract law information
-                laws = self.extract_law_info()
+                laws = self.extract_law_info("propositions")
 
-                # Save to JSON
                 if laws:
                     all_laws["propositions_de_loi"] = laws
                     self.save_to_json(
                         {"propositions_de_loi": laws}, "moroccan_legislation.json"
                     )
 
-            # Navigate to textes de loi page and extract for different legislatures
             if links.get("adopted"):
                 self.driver.get(links["adopted"])
                 self.wait_for_page_load()
 
-                # Extract law information for each legislature
                 laws = self.extract_adopted_law_info(links["adopted"])
                 if laws:
                     all_laws["textes_de_loi"] = laws
@@ -392,7 +516,6 @@ class GenericScraper:
                         {"textes_de_loi": laws}, "moroccan_legislation.json"
                     )
 
-            # Save all laws to a single JSON file
             if all_laws:
                 self.save_to_json(all_laws, "moroccan_legislation_all.json")
 
