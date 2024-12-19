@@ -21,3 +21,5 @@ To use the scraper, run the main.py script:
 ```
 python main.py > shunk.txt
 ```
+
+You may need to change the path of your chrome-equivalent browser in line 65 of [scraper.py](scraper.py)
