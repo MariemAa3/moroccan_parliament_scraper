@@ -1,12 +1,14 @@
 from scraper import GenericScraper
-from config import LAWS_URL
+from config import QUESTION_URL
 
 
 def main():
-    scraper = GenericScraper(LAWS_URL)
+    # Create scraper instance
+    scraper = GenericScraper(QUESTION_URL)
 
     try:
-        results = scraper.scrape_legislation()
+        # Start scraping
+        results = scraper.scrape_question()
         print(f"Scraped {len(results)} laws successfully")
     except Exception as e:
         print(f"Error during scraping: {str(e)}")

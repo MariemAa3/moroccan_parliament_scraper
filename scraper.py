@@ -61,11 +61,14 @@ class GenericScraper:
             options.add_argument("--ignore-certificate-errors")
             options.add_argument("--enable-javascript")
 
+            # Choose your chrome binary
+            options.binary_location = "/usr/bin/brave"
+
             window_sizes = [(1366, 768), (1920, 1080), (1536, 864)]
             random_size = random.choice(window_sizes)
             options.add_argument(f"--window-size={random_size[0]},{random_size[1]}")
 
-            driver = uc.Chrome(options=options)
+            driver = uc.Chrome(options=options,version_main=130)
             driver.set_page_load_timeout(random.randint(30, 40))
 
             return driver
@@ -526,3 +529,135 @@ class GenericScraper:
             return []
         finally:
             self.cleanup()
+
+    def extract_question_item(self,item,state):
+
+        link_element = item.find_elements(
+                        By.XPATH, "./div[1]/div"
+                    )
+        #print(item.get_attribute("innerHTML"))
+                    
+        title = link_element[0].find_element(
+                        By.XPATH, "./a"
+                    ).text
+        date = link_element[1].find_element(
+                        By.XPATH, "./time"
+                    ).get_attribute("datetime")
+        to = link_element[2].get_attribute("innerHTML").split('</span>')[1].strip()
+
+        link_element = item.find_elements(
+            By.XPATH, "./div[2]/div"
+        )
+
+        author = link_element[0].get_attribute("innerHTML").split('</span>')[1].strip()
+
+        result = {"title": title, "to": to,"author" :author,"date":date,"state":state}
+        print(result)
+
+        return result        
+
+
+    def extract_question_info(self):
+        questions = []
+        current_page = 1
+        last_page = None
+
+        while True:
+            self.logger.info(f"Scraping page {current_page}")
+
+            # Wait for the law items to be present
+            try :
+                wait_for_element(self.driver, By.CSS_SELECTOR, ".q-block3 .q-b3i-red")
+            except :
+                pass
+            try :
+                wait_for_element(self.driver, By.CSS_SELECTOR, ".q-block3 .q-b3i-green")
+            except :
+                pass
+
+            # Find all law items
+            not_question_items = find_elements(
+                self.driver, By.CSS_SELECTOR, ".q-block3 .q-b3i-red"
+            )
+
+            yes_question_items = find_elements(
+                self.driver, By.CSS_SELECTOR, ".q-block3 .q-b3i-green"
+            )
+
+            for item in not_question_items:
+            
+                try:
+                    # Find the info within each item                
+                    result = self.extract_question_item(item,"no")
+                    questions.append(result)
+
+                except Exception as e:
+                    self.logger.error(f"Error extracting question info: {str(e)}")
+                    continue
+
+            for item in yes_question_items:
+            
+                try:
+                    # Find the info within each item                
+                    result = self.extract_question_item(item,"yes")
+                    questions.append(result)
+
+                except Exception as e:
+                    self.logger.error(f"Error extracting law info: {str(e)}")
+                    continue
+
+            try:
+                next_page_link = self.driver.find_element(
+                    By.XPATH, "//a[@class='page-link' and contains(text(), 'التالي')]"
+                )
+                if last_page is None:
+                    current_page_link = self.driver.find_element(
+                        By.CSS_SELECTOR, ".pagination-container .active a"
+                    )
+                    last_page = current_page_link.get_attribute("href")
+                next_page_link.click()
+                current_page += 1
+                self.wait_for_page_load()
+            except NoSuchElementException:
+                self.logger.info("No more pages to navigate.")
+                break
+            except Exception as e:
+                self.logger.error(f"Error navigating to the next page: {str(e)}")
+                break
+
+        return questions
+
+
+    def scrape_question(self):
+
+        try:
+            self.logger.info("Starting scraping process...")
+
+            # Initialize driver if not already done
+            if self.driver is None:
+                self.driver = self.get_driver()
+
+            # Navigate to base URL
+            self.logger.info(f"Accessing URL: {self.base_url}")
+            self.driver.get(self.base_url)
+            self.wait_for_page_load()
+
+            all_questions = {}
+
+            self.wait_for_page_load()
+
+            # Extract law information
+            questions = self.extract_question_info()
+
+            # Save to JSON
+            if questions:
+                self.save_to_json(
+                    {"questions": questions}, "moroccan_questions.json"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Error in scraping process: {str(e)}")
+            return []
+        finally:
+            self.cleanup()
+
