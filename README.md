@@ -6,7 +6,9 @@ This is a web scraper that extracts information about Moroccan Parliament from t
 
 Install the required packages by running:
 
+```
 pip install -r requirements.txt
+```
 
 You'll also need to have the Chrome driver installed on your system. You can download the Chrome driver from the official website:
 
@@ -16,4 +18,6 @@ You'll also need to have the Chrome driver installed on your system. You can dow
 
 To use the scraper, run the main.py script:
 
-python main.py
+```
+python main.py > shunk.txt
+```
